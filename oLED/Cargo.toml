@@ -1,16 +1,18 @@
 [package]
 edition      = "2024"
-name         = "firstesp32s3"
+name         = "esp32-s3-led"
 rust-version = "1.88"
 version      = "0.1.0"
 
 [[bin]]
-name = "firstesp32s3"
+name = "esp32-s3-led"
 path = "./src/bin/main.rs"
 
 [dependencies]
-esp-hal = { version = "~1.1.0", features = ["esp32s3"] }
+#esp-idf-sys = { version = "0.37.2", features = ["binstart"] }
 
+esp-hal = { version = "~1.0", features = ["esp32s3", "unstable"] }
+smart-leds = "0.4.0"
 esp-println = { version = "0.17.0", features = ["esp32s3"] }
 esp-backtrace = { version = "0.19.0", features = ["esp32s3", "panic-handler", "println"] }
 
@@ -18,7 +20,11 @@ esp-backtrace = { version = "0.19.0", features = ["esp32s3", "panic-handler", "p
 esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32s3"] }
 
 critical-section = "1.2.0"
+esp-hal-smartled = { version = "0.17.0", features = ["esp32s3"] }
 
+[build-dependencies]
+embuild = "*"
+anyhow = "1"
 
 # For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html
 [profile.dev]
