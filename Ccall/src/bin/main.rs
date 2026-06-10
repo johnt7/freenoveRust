@@ -11,10 +11,11 @@ use esp_hal::clock::CpuClock;
 use esp_hal::main;
 use esp_hal::rmt::Rmt;
 use esp_hal::time::{Duration, Instant, Rate};
+use esp_hal::uart::Config as UartConfig;
 use esp_hal_smartled::{SmartLedsAdapter, smart_led_buffer};
 use esp_backtrace as _;
 use esp_println::println;
-use esp32_s3_ccall::add_numbers_from_c;
+use esp32_s3_ccall::{SerialPort, add_numbers_from_c};
 use smart_leds::{RGB8, SmartLedsWrite as _};
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
@@ -38,6 +39,10 @@ fn main() -> ! {
     let mut ws2812_buf = smart_led_buffer!(1);
     let mut ws2812 = SmartLedsAdapter::new(rmt.channel0, peripherals.GPIO48, &mut ws2812_buf);
 
+    let mut serial = SerialPort::new(peripherals.UART0, UartConfig::default())
+        .expect("failed to initialize UART0")
+        .with_pins(peripherals.GPIO44, peripherals.GPIO43);
+
     let colors = [
         RGB8 { r: 32, g: 0, b: 0 },
         RGB8 { r: 0, g: 32, b: 0 },
@@ -47,11 +52,24 @@ fn main() -> ! {
     let mut idx = 0usize;
 
     println!("app started");
+    serial.write(b"serial initialized\r\n").unwrap();
+    serial.flush().unwrap();
+
     let sum = add_numbers_from_c(21, 21);
     println!("C FFI example: add_numbers(21, 21) = {}", sum);
 
     loop {
-        println!("loop");
+        // println!("loop");
+        if serial.read_ready() {
+            let mut rx_buf = [0u8; 64];
+            if let Ok(read_len) = serial.read(&mut rx_buf) {
+                if read_len > 0 {
+                    let _ = serial.write(b"Received: ");
+                    let _ = serial.write(&rx_buf[..read_len]);
+                    let _ = serial.flush();
+                }
+            }
+        }
         ws2812.write([colors[idx]].into_iter()).unwrap();
         idx = (idx + 1) % colors.len();
         let delay_start = Instant::now();
