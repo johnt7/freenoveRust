@@ -59,16 +59,13 @@ fn main() -> ! {
     println!("C FFI example: add_numbers(21, 21) = {}", sum);
 
     loop {
-        // println!("loop");
-        if serial.read_ready() {
-            let mut rx_buf = [0u8; 64];
-            if let Ok(read_len) = serial.read(&mut rx_buf) {
-                if read_len > 0 {
-                    let _ = serial.write(b"Received: ");
-                    let _ = serial.write(&rx_buf[..read_len]);
-                    let _ = serial.flush();
-                }
-            }
+        // println!("looping...");
+        let mut line = [0u8; 64];
+        if let Ok(Some(line_len)) = serial.read_line(&mut line) {
+            let _ = serial.write(b"Line: ");
+            let _ = serial.write(&line[..line_len]);
+            let _ = serial.write(b"\r\n");
+            let _ = serial.flush();
         }
         ws2812.write([colors[idx]].into_iter()).unwrap();
         idx = (idx + 1) % colors.len();
