@@ -7,34 +7,56 @@ use defmt::info;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_hal::clock::CpuClock;
-use esp_hal::time::Duration as HalDuration;
 use esp_hal::timer::timg::TimerGroup;
-use esp_radio::wifi::WifiController;
-use esp_radio::wifi::scan::{ScanConfig, ScanTypeConfig};
+use esp_radio::wifi::sta::StationConfig;
+use esp_radio::wifi::{Config, WifiController};
 use panic_rtt_target as _;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 esp_bootloader_esp_idf::esp_app_desc!();
 
 #[embassy_executor::task]
-async fn wifi_scan_task(mut wifi_controller: WifiController<'static>, scan_cfg: ScanConfig) -> ! {
-    info!("Starting Wi-Fi scan loop");
+async fn wifi_connect_task(mut wifi_controller: WifiController<'static>) -> ! {
+    const WIFI_SSID: &str = "Enjoy Every Sandwich";
+    const WIFI_PASSWORD: &str = "burlingtonarmalite";
+    const TARGET_BSSID: [u8; 6] = [0x70, 0x4f, 0x57, 0x93, 0x7c, 0xdf];
+    const TARGET_CHANNEL: u8 = 11;
+
+    let station_cfg = StationConfig::default()
+        .with_ssid(WIFI_SSID)
+        .with_password(WIFI_PASSWORD.into())
+        .with_bssid(TARGET_BSSID)
+        .with_channel(TARGET_CHANNEL);
+
+    let wifi_cfg = Config::Station(station_cfg);
+
+    wifi_controller
+        .set_config(&wifi_cfg)
+        .expect("Failed to set Wi-Fi station configuration");
+
+    info!("Starting Wi-Fi connect loop for SSID={} CH={} BSSID={=[u8]:x}", WIFI_SSID, TARGET_CHANNEL, &TARGET_BSSID[..]);
 
     loop {
-        match wifi_controller.scan_async(&scan_cfg).await {
-            Ok(results) => {
-                info!("Found {} networks", results.len());
-                for ap in &results {
-                    info!(
-                        "SSID={} RSSI={}dBm CH={} BSSID={=[u8]:x}",
-                        ap.ssid.as_str(),
-                        ap.signal_strength,
-                        ap.channel,
-                        &ap.bssid[..]
-                    );
+        match wifi_controller.connect_async().await {
+            Ok(info) => {
+                info!(
+                    "Connected SSID={} CH={} BSSID={=[u8]:x}",
+                    info.ssid.as_str(),
+                    info.channel,
+                    &info.bssid[..]
+                );
+                match wifi_controller.wait_for_disconnect_async().await {
+                    Ok(disconnect_info) => {
+                        info!(
+                            "Disconnected from SSID={} reason={:?}",
+                            disconnect_info.ssid.as_str(),
+                            disconnect_info.reason
+                        );
+                    }
+                    Err(err) => info!("wait_for_disconnect_async failed: {:?}", err),
                 }
             }
-            Err(err) => info!("Scan failed: {:?}", err),
+            Err(err) => info!("Connect failed: {:?}", err),
         }
 
         Timer::after(Duration::from_secs(5)).await;
@@ -68,16 +90,9 @@ async fn main(spawner: Spawner) -> ! {
     let (wifi_controller, _interfaces) = esp_radio::wifi::new(peripherals.WIFI, Default::default())
         .expect("Failed to initialize Wi-Fi controller");
 
-    let scan_cfg = ScanConfig::default()
-        .with_show_hidden(true)
-        .with_scan_type(ScanTypeConfig::Active {
-            min: HalDuration::from_millis(50),
-            max: HalDuration::from_millis(120),
-        });
-
     spawner.spawn(
-        wifi_scan_task(wifi_controller, scan_cfg)
-        .expect("Failed to create Wi-Fi scan task"),
+        wifi_connect_task(wifi_controller)
+        .expect("Failed to create Wi-Fi connect task"),
     );
     spawner.spawn(
         heartbeat(
