@@ -8,7 +8,8 @@ use embassy_executor::Spawner;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Ipv4Address, Stack, StackResources};
 use embassy_time::with_timeout;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Timer, Instant};
+
 use embedded_io_async::Write;
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
@@ -139,12 +140,16 @@ async fn wifi_connect_task(mut wifi_controller: WifiController<'static>, stack: 
                     TARGET_PORT
                 );
 
+                let mut delay_start = Instant::now();
                 loop {
-                    if let Err(err) = socket.write_all(PAYLOAD).await {
-                        info!("TCP send failed: {:?}", err);
-                        break;
-                    } else {
-                        info!("Sent {} bytes", PAYLOAD.len());
+                    if delay_start.elapsed() > Duration::from_secs(2) {
+                        if let Err(err) = socket.write_all(PAYLOAD).await {
+                            info!("TCP send failed: {:?}", err);
+                            break;
+                        } else {
+                            info!("Sent {} bytes", PAYLOAD.len());
+                        }
+                        delay_start = Instant::now();
                     }
 
                     match with_timeout(Duration::from_millis(1), socket.read(&mut inbuf)).await {
