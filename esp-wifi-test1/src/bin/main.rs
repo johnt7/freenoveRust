@@ -24,8 +24,8 @@ static NET_STACK_RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
 
 #[embassy_executor::task]
 async fn wifi_connect_task(mut wifi_controller: WifiController<'static>, stack: Stack<'static>) -> ! {
-    const WIFI_SSID: &str = "Enjoy Every Sandwich";
-    const WIFI_PASSWORD: &str = "burlingtonarmalite";
+    const WIFI_SSID: &str = env!("WIFI_SSID");
+    const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
     const TARGET_BSSID: [u8; 6] = [0x70, 0x4f, 0x57, 0x93, 0x7c, 0xdf];
     const TARGET_CHANNEL: u8 = 11;
     const TARGET_IP_OCTETS: [u8; 4] = [192, 168, 0, 253];
@@ -63,15 +63,18 @@ async fn wifi_connect_task(mut wifi_controller: WifiController<'static>, stack: 
                         info.channel,
                         &info.bssid[..]
                     );
+                    break;
                 }
                 Err(err) => {
-                    info!("Connect failed: {:?}", err);
+                    info!("Connect failed: {:?}, wait 5 seconds", err);
                     Timer::after(Duration::from_secs(5)).await;
-                    continue;
+                    // continue;
                 }
             }
         }
+    }
 
+    loop {
         if !stack.is_config_up() {
             info!("Waiting for DHCP IPv4 configuration");
             if with_timeout(Duration::from_secs(20), stack.wait_config_up())
@@ -81,12 +84,16 @@ async fn wifi_connect_task(mut wifi_controller: WifiController<'static>, stack: 
                 info!("DHCP timeout after 20s, reconnecting Wi-Fi");
                 let _ = wifi_controller.disconnect_async().await;
                 Timer::after(Duration::from_secs(2)).await;
-                continue;
+                // loop{};
             }
 
+        } else {
             info!("DHCP IPv4 configuration acquired");
+            break;
         }
+    }
 
+    loop {
         if let Some(config) = stack.config_v4() {
             info!(
                 "Local IPv4={} gateway={:?} dns={:?}",
@@ -94,11 +101,16 @@ async fn wifi_connect_task(mut wifi_controller: WifiController<'static>, stack: 
                 config.gateway,
                 config.dns_servers
             );
+            break;
         }
+    }
 
-        let mut rx_buffer = [0u8; 1024];
-        let mut tx_buffer = [0u8; 1024];
-        let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+    let mut rx_buffer = [0u8; 1024];
+    let mut tx_buffer = [0u8; 1024];
+    let mut inbuf = [0u8; 1024];
+    let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+
+    loop {
 
         match with_timeout(
             TCP_CONNECT_TIMEOUT,
@@ -127,14 +139,38 @@ async fn wifi_connect_task(mut wifi_controller: WifiController<'static>, stack: 
                     TARGET_PORT
                 );
 
-                if let Err(err) = socket.write_all(PAYLOAD).await {
-                    info!("TCP send failed: {:?}", err);
-                } else {
-                    info!("Sent {} bytes", PAYLOAD.len());
-                }
+                loop {
+                    if let Err(err) = socket.write_all(PAYLOAD).await {
+                        info!("TCP send failed: {:?}", err);
+                        break;
+                    } else {
+                        info!("Sent {} bytes", PAYLOAD.len());
+                    }
 
-                if let Err(err) = socket.flush().await {
-                    info!("TCP flush failed: {:?}", err);
+                    match with_timeout(Duration::from_millis(1), socket.read(&mut inbuf)).await {
+                        Ok(Ok(n)) => {
+                            info!("Received {} bytes: {:?}", n, &inbuf[..n]);
+                            if let Err(err) = socket.write_all(&inbuf[..n]).await {
+                                info!("TCP send failed: {:?}", err);
+                                break;
+                            } else {
+                                info!("Sent {} bytes", &inbuf[..n].len());
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            info!("TCP read failed: {:?}", e);
+                            break;
+                        }
+                        Err(_) => {
+                            // info!("TCP read timeout");
+                        }
+                    }
+
+                    // if let Err(err) = socket.flush().await {
+                    //     info!("TCP flush failed: {:?}", err);
+                    // }
+
+                    Timer::after(Duration::from_secs(2)).await;
                 }
             }
             Ok(Err(err)) => info!("TCP connect failed: {:?}", err),
