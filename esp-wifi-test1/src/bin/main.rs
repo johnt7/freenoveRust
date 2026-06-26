@@ -5,22 +5,39 @@ extern crate alloc;
 
 use defmt::info;
 use embassy_executor::Spawner;
+use embassy_net::tcp::TcpSocket;
+use embassy_net::{Ipv4Address, Stack, StackResources};
+use embassy_time::with_timeout;
 use embassy_time::{Duration, Timer};
+use embedded_io_async::Write;
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{Config, WifiController};
 use panic_rtt_target as _;
+use static_cell::StaticCell;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 esp_bootloader_esp_idf::esp_app_desc!();
 
+static NET_STACK_RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
+
 #[embassy_executor::task]
-async fn wifi_connect_task(mut wifi_controller: WifiController<'static>) -> ! {
+async fn wifi_connect_task(mut wifi_controller: WifiController<'static>, stack: Stack<'static>) -> ! {
     const WIFI_SSID: &str = "Enjoy Every Sandwich";
     const WIFI_PASSWORD: &str = "burlingtonarmalite";
     const TARGET_BSSID: [u8; 6] = [0x70, 0x4f, 0x57, 0x93, 0x7c, 0xdf];
     const TARGET_CHANNEL: u8 = 11;
+    const TARGET_IP_OCTETS: [u8; 4] = [192, 168, 0, 253];
+    const TARGET_IP: Ipv4Address = Ipv4Address::new(
+        TARGET_IP_OCTETS[0],
+        TARGET_IP_OCTETS[1],
+        TARGET_IP_OCTETS[2],
+        TARGET_IP_OCTETS[3],
+    );
+    const TARGET_PORT: u16 = 5000;
+    const PAYLOAD: &[u8] = b"hello from esp32s3\n";
+    const TCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
     let station_cfg = StationConfig::default()
         .with_ssid(WIFI_SSID)
@@ -37,26 +54,90 @@ async fn wifi_connect_task(mut wifi_controller: WifiController<'static>) -> ! {
     info!("Starting Wi-Fi connect loop for SSID={} CH={} BSSID={=[u8]:x}", WIFI_SSID, TARGET_CHANNEL, &TARGET_BSSID[..]);
 
     loop {
-        match wifi_controller.connect_async().await {
-            Ok(info) => {
-                info!(
-                    "Connected SSID={} CH={} BSSID={=[u8]:x}",
-                    info.ssid.as_str(),
-                    info.channel,
-                    &info.bssid[..]
-                );
-                match wifi_controller.wait_for_disconnect_async().await {
-                    Ok(disconnect_info) => {
-                        info!(
-                            "Disconnected from SSID={} reason={:?}",
-                            disconnect_info.ssid.as_str(),
-                            disconnect_info.reason
-                        );
-                    }
-                    Err(err) => info!("wait_for_disconnect_async failed: {:?}", err),
+        if !wifi_controller.is_connected() {
+            match wifi_controller.connect_async().await {
+                Ok(info) => {
+                    info!(
+                        "Connected SSID={} CH={} BSSID={=[u8]:x}",
+                        info.ssid.as_str(),
+                        info.channel,
+                        &info.bssid[..]
+                    );
+                }
+                Err(err) => {
+                    info!("Connect failed: {:?}", err);
+                    Timer::after(Duration::from_secs(5)).await;
+                    continue;
                 }
             }
-            Err(err) => info!("Connect failed: {:?}", err),
+        }
+
+        if !stack.is_config_up() {
+            info!("Waiting for DHCP IPv4 configuration");
+            if with_timeout(Duration::from_secs(20), stack.wait_config_up())
+                .await
+                .is_err()
+            {
+                info!("DHCP timeout after 20s, reconnecting Wi-Fi");
+                let _ = wifi_controller.disconnect_async().await;
+                Timer::after(Duration::from_secs(2)).await;
+                continue;
+            }
+
+            info!("DHCP IPv4 configuration acquired");
+        }
+
+        if let Some(config) = stack.config_v4() {
+            info!(
+                "Local IPv4={} gateway={:?} dns={:?}",
+                config.address,
+                config.gateway,
+                config.dns_servers
+            );
+        }
+
+        let mut rx_buffer = [0u8; 1024];
+        let mut tx_buffer = [0u8; 1024];
+        let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+
+        match with_timeout(
+            TCP_CONNECT_TIMEOUT,
+            socket.connect((TARGET_IP, TARGET_PORT)),
+        )
+        .await
+        {
+            Err(_) => {
+                info!(
+                    "TCP connect timeout after {}s to {}.{}.{}.{}:{}",
+                    TCP_CONNECT_TIMEOUT.as_secs(),
+                    TARGET_IP_OCTETS[0],
+                    TARGET_IP_OCTETS[1],
+                    TARGET_IP_OCTETS[2],
+                    TARGET_IP_OCTETS[3],
+                    TARGET_PORT
+                );
+            }
+            Ok(Ok(())) => {
+                info!(
+                    "TCP connected to {}.{}.{}.{}:{}",
+                    TARGET_IP_OCTETS[0],
+                    TARGET_IP_OCTETS[1],
+                    TARGET_IP_OCTETS[2],
+                    TARGET_IP_OCTETS[3],
+                    TARGET_PORT
+                );
+
+                if let Err(err) = socket.write_all(PAYLOAD).await {
+                    info!("TCP send failed: {:?}", err);
+                } else {
+                    info!("Sent {} bytes", PAYLOAD.len());
+                }
+
+                if let Err(err) = socket.flush().await {
+                    info!("TCP flush failed: {:?}", err);
+                }
+            }
+            Ok(Err(err)) => info!("TCP connect failed: {:?}", err),
         }
 
         Timer::after(Duration::from_secs(5)).await;
@@ -87,11 +168,18 @@ async fn main(spawner: Spawner) -> ! {
     // Required for Wi-Fi firmware tasks.
     esp_rtos::start(timg0.timer0, sw_interrupt.software_interrupt0);
 
-    let (wifi_controller, _interfaces) = esp_radio::wifi::new(peripherals.WIFI, Default::default())
+    let (wifi_controller, interfaces) = esp_radio::wifi::new(peripherals.WIFI, Default::default())
         .expect("Failed to initialize Wi-Fi controller");
 
+    let (stack, mut runner) = embassy_net::new(
+        interfaces.station,
+        embassy_net::Config::dhcpv4(Default::default()),
+        NET_STACK_RESOURCES.init(StackResources::new()),
+        0x0123_4567_89ab_cdef,
+    );
+
     spawner.spawn(
-        wifi_connect_task(wifi_controller)
+        wifi_connect_task(wifi_controller, stack)
         .expect("Failed to create Wi-Fi connect task"),
     );
     spawner.spawn(
@@ -102,7 +190,5 @@ async fn main(spawner: Spawner) -> ! {
         .expect("Failed to create heartbeat task"),
     );
 
-    loop {
-        Timer::after(Duration::from_secs(60)).await;
-    }
+    runner.run().await;
 }
