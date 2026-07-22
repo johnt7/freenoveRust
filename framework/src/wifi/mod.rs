@@ -183,7 +183,7 @@ pub async fn wifi_handling(mut wifi_controller: WifiController<'static>, stack: 
 
     info!("xStarting Wi-Fi connect loop for SSID={}", WIFI_SSID);
 
-    loop {
+    'outer: loop {
         // wait until the wifi is connected.
         info!("xWi-Fi connect loop iteration");
         loop {
@@ -216,7 +216,8 @@ pub async fn wifi_handling(mut wifi_controller: WifiController<'static>, stack: 
                 {
                     info!("DHCP timeout after 5s, reconnecting Wi-Fi");
                     let _ = wifi_controller.disconnect_async().await;
-                    Timer::after(Duration::from_secs(2)).await;
+                    continue 'outer;
+                    // Timer::after(Duration::from_secs(2)).await;
                     // loop{};
                 }
 
@@ -276,6 +277,7 @@ pub async fn socket_setup(stack: Stack<'static>) -> ! {
                 );
                 break;
             }
+            info!("socket setup: No IPv4 configuration available, wait 5 seconds");
             Timer::after(Duration::from_secs(5)).await;
         }
 
@@ -288,7 +290,7 @@ pub async fn socket_setup(stack: Stack<'static>) -> ! {
         {
             Err(_) => {
                 info!(
-                    "TCP connect timeout after {}s to {}.{}.{}.{}:{}",
+                    "socket setup: TCP connect timeout after {}s to {}.{}.{}.{}:{}",
                     TCP_CONNECT_TIMEOUT.as_secs(),
                     TARGET_IP_OCTETS[0],
                     TARGET_IP_OCTETS[1],
