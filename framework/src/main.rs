@@ -223,15 +223,20 @@ async fn main(spawner: Spawner) -> ! {
     );
 
     spawner.spawn(
-        wifi::wifi_setup(wifi_controller, stack)
-        .expect("Failed to create Wi-Fi connect task"),
-    );
-    spawner.spawn(
         heartbeat::run(
             esp_hal::gpio::Output::new(peripherals.GPIO2, esp_hal::gpio::Level::Low, Default::default()),
             Duration::from_millis(500)
         )
         .expect("Failed to create heartbeat task"),
+    );
+    spawner.spawn(
+        // wifi::wifi_setup(wifi_controller, stack)
+        wifi::wifi_handling(wifi_controller, stack)
+        .expect("Failed to create Wi-Fi connect task"),
+    );
+    spawner.spawn(
+        wifi::socket_setup(stack)
+        .expect("Failed to create socket"),
     );
 
     runner.run().await;
