@@ -5,26 +5,26 @@ extern crate alloc;
 
 // use defmt::info;
 use embassy_executor::Spawner;
-// use embassy_net::tcp::TcpSocket;
 use embassy_net::{StackResources};
-// use embassy_time::with_timeout;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 
-// use embedded_io_async::Write;
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
-// use esp_radio::wifi::sta::StationConfig;
-// use esp_radio::wifi::{Config, WifiController};
 use panic_rtt_target as _;
 use static_cell::StaticCell;
 
 mod heartbeat;
 mod wifi;
+mod internal;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 esp_bootloader_esp_idf::esp_app_desc!();
 
 static NET_STACK_RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
+static WIFI_IN_CHANNEL: Channel<CriticalSectionRawMutex, u8, 100> = Channel::new();
+static WIFI_OUT_CHANNEL: Channel<CriticalSectionRawMutex, u8, 100> = Channel::new();
 
 #[embassy_executor::task]
 async fn heartbeat(mut led: esp_hal::gpio::Output<'static>, delay: Duration) -> ! {
@@ -53,6 +53,11 @@ async fn main(spawner: Spawner) -> ! {
     let (wifi_controller, interfaces) = esp_radio::wifi::new(peripherals.WIFI, Default::default())
         .expect("Failed to initialize Wi-Fi controller");
 
+    // let in_sender = WIFI_IN_CHANNEL.sender();
+    // let in_receiver = WIFI_IN_CHANNEL.receiver();
+    // let out_sender = WIFI_OUT_CHANNEL.sender();
+    // let out_receiver = WIFI_OUT_CHANNEL.receiver();
+
     let (stack, mut runner) = embassy_net::new(
         interfaces.station,
         embassy_net::Config::dhcpv4(Default::default()),
@@ -73,8 +78,12 @@ async fn main(spawner: Spawner) -> ! {
         .expect("Failed to create Wi-Fi connect task"),
     );
     spawner.spawn(
-        wifi::socket_setup(stack)
+        wifi::socket_setup(stack, WIFI_IN_CHANNEL.sender(), WIFI_OUT_CHANNEL.receiver())
         .expect("Failed to create socket"),
+    );
+    spawner.spawn(
+        internal::text_handler(WIFI_IN_CHANNEL.receiver(), WIFI_OUT_CHANNEL.sender())
+        .expect("Failed to create internal handler"),
     );
 
     runner.run().await;

@@ -3,8 +3,11 @@ use embedded_io_async::Write;
 
 use embassy_net::{Ipv4Address, Stack};
 use embassy_net::tcp::TcpSocket;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::{Sender, Receiver};
+use embassy_futures::select::{select, Either};
 
-use embassy_time::{Duration, Timer, Instant};
+use embassy_time::{Duration, Timer};
 use embassy_time::with_timeout;
 
 use esp_radio::wifi::{Config, WifiController};
@@ -94,10 +97,9 @@ pub async fn wifi_handling(mut wifi_controller: WifiController<'static>, stack: 
         }
 
         loop {
-            info!("xconneted, wait for fail");
              if let None = stack.config_v4() {
                 info!(
-                    "xNo IPv4 configuration available",
+                    "No IPv4 configuration available",
                 );
                 break;
             }
@@ -108,7 +110,7 @@ pub async fn wifi_handling(mut wifi_controller: WifiController<'static>, stack: 
 }
 
 #[embassy_executor::task]
-pub async fn socket_setup(stack: Stack<'static>) -> ! {
+pub async fn socket_setup(stack: Stack<'static>, in_sender: Sender<'static, CriticalSectionRawMutex, u8, 100>, out_receiver: Receiver<'static, CriticalSectionRawMutex, u8, 100>) -> ! {
     const TARGET_PORT: u16 = 5000;
     const PAYLOAD: &[u8] = b"hello from esp32s3\n";
     const TCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -131,7 +133,7 @@ pub async fn socket_setup(stack: Stack<'static>) -> ! {
                 );
                 break;
             }
-            info!("socket setup: No IPv4 configuration available, wait 5 seconds");
+            info!("Socket setup: No IPv4 configuration available, wait 5 seconds");
             Timer::after(Duration::from_secs(5)).await;
         }
 
@@ -163,56 +165,69 @@ pub async fn socket_setup(stack: Stack<'static>) -> ! {
                     TARGET_PORT
                 );
 
-                let mut delay_start = Instant::now();
+                // let mut delay_start = Instant::now();
                 loop {
-                    if delay_start.elapsed() > Duration::from_secs(2) {
-                        match with_timeout(
-                        TCP_CONNECT_TIMEOUT,
-                        socket.write_all(PAYLOAD),
-                        )
-                        .await
-                        {
-                            Ok(Err(err)) => {
-                                info!("socket setup:TCP send failed: {:?}", err);
-                                break;
-                            }
-                            Err(_) => {
-                                    info!(
-                                        "socket setup: write all timeout after {}s",
-                                        TCP_CONNECT_TIMEOUT.as_secs()
-                                    );
-                            }
-                            Ok(Ok(())) => {
-                                info!("socket setup: Sent {} bytes", PAYLOAD.len());
-                                delay_start = Instant::now();
-                            }
-                         }
-                     }
+                    // if delay_start.elapsed() > Duration::from_secs(2) {
+                    //     match with_timeout(
+                    //     TCP_CONNECT_TIMEOUT,
+                    //     socket.write_all(PAYLOAD),
+                    //     )
+                    //     .await
+                    //     {
+                    //         Ok(Err(err)) => {
+                    //             info!("socket setup:TCP send failed: {:?}", err);
+                    //             break;
+                    //         }
+                    //         Err(_) => {
+                    //                 info!(
+                    //                     "socket setup: write all timeout after {}s",
+                    //                     TCP_CONNECT_TIMEOUT.as_secs()
+                    //                 );
+                    //         }
+                    //         Ok(Ok(())) => {
+                    //             info!("socket setup: Sent {} bytes", PAYLOAD.len());
+                    //             delay_start = Instant::now();
+                    //         }
+                    //      }
+                    //  }
 
-                    match with_timeout(Duration::from_millis(1), socket.read(&mut inbuf)).await {
-                        Ok(Ok(n)) => {
-                            info!("Received {} bytes: {:?}", n, &inbuf[..n]);
-                            if let Err(err) = socket.write_all(&inbuf[..n]).await {
-                                info!("socket setup: TCP send failed: {:?}", err);
-                                break;
-                            } else {
-                                info!("socket setup: Sent {} bytes", &inbuf[..n].len());
+                    match select(socket.read(&mut inbuf), out_receiver.receive()).await {
+                        Either::First(Ok(n)) => {
+                            // push inbuf into in_sender
+                            for &byte in &inbuf[..n] {
+                                in_sender.send(byte).await;
                             }
+                            info!("Received {} bytes: {:?}", n, &inbuf[..n]);
                         }
-                        Ok(Err(e)) => {
+                        Either::First(Err(e)) => {
                             info!("socket setup: TCP read failed: {:?}", e);
                             break;
                         }
-                        Err(_) => {
-                            // info!("TCP read timeout");
+                        Either::Second(c) => {
+                            socket.write_all(&[c]).await.expect("Failed to write to socket");
+                            // info!("socket setup: Sent {} bytes", 1);
                         }
                     }
-
-                    // if let Err(err) = socket.flush().await {
-                    //     info!("TCP flush failed: {:?}", err);
+                    // match with_timeout(Duration::from_millis(1), socket.read(&mut inbuf)).await {
+                    //     Ok(Ok(n)) => {
+                    //         info!("Received {} bytes: {:?}", n, &inbuf[..n]);
+                    //         if let Err(err) = socket.write_all(&inbuf[..n]).await {
+                    //             info!("socket setup: TCP send failed: {:?}", err);
+                    //             break;
+                    //         } else {
+                    //             info!("socket setup: Sent {} bytes", &inbuf[..n].len());
+                    //         }
+                    //     }
+                    //     Ok(Err(e)) => {
+                    //         info!("socket setup: TCP read failed: {:?}", e);
+                    //         break;
+                    //     }
+                    //     Err(_) => {
+                    //         // info!("TCP read timeout");
+                    //     }
                     // }
 
-                    Timer::after(Duration::from_secs(2)).await;
+                    //  Timer::after(Duration::from_secs(2)).await;
                 }
             }
             Ok(Err(err)) => info!("socket setup:TCP connect failed: {:?}", err),
