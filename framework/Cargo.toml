@@ -1,7 +1,7 @@
 [package]
 edition      = "2024"
 name         = "framework"
-rust-version = "1.88"
+rust-version = "1.95"
 version      = "0.1.0"
 
 [dependencies]
@@ -60,6 +60,9 @@ critical-section = "1.2.0"
 static_cell      = "2.1.1"
 embassy-futures = "0.1.2"
 heapless = "0.9.3"
+smart-leds = "0.4.0"
+ws2812-rmt = "0.2.0"
+# ws2812-esp32-rmt-driver = "0.13.1"
 
 
 # For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html
