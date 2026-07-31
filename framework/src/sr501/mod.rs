@@ -1,7 +1,14 @@
-use defmt::info;
+// use defmt::info;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
 use embassy_time::{Duration,Timer};
-use super::SomeSensorState;
-use super::SR501_SIGNAL;
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum SomeSensorState {
+  On,
+  Off,
+}
+pub static SR501_SIGNAL: Signal<CriticalSectionRawMutex, SomeSensorState> = Signal::new();
 
 #[embassy_executor::task]
 pub async fn sr501_task(

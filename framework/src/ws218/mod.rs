@@ -1,9 +1,12 @@
 
+use defmt::info;
 use esp_hal::rmt::{Channel, PulseCode, Tx};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use esp_hal::gpio::Level;
 use esp_hal::Blocking;
 use smart_leds::RGB8;
 use embassy_time::{Duration, Timer};
+use embassy_sync::channel::{Receiver};
 
 pub struct NeoPixel<'ch> {
     channel: Option<Channel<'ch, Blocking, Tx>>,
@@ -31,17 +34,14 @@ impl<'ch> NeoPixel<'ch> {
 #[embassy_executor::task]
 pub async fn run_ws218(
     mut neopixel: NeoPixel<'static>,
-    color_a: RGB8,
-    color_b: RGB8,
-    delay: Duration,
-) -> ! {
-    let mut use_first = true;
+    in_channel: Receiver<'static, CriticalSectionRawMutex, RGB8, 5>
 
+) -> ! {
+    neopixel.write(RGB8 { r: 0, g: 0, b: 0 }).await; // Initialize the NeoPixel to off
     loop {
-        let color = if use_first { color_a } else { color_b };
+        let color = in_channel.receive().await;
+        info!("Received color: {:?} {:?} {:?}", color.r, color.g, color.b);
         neopixel.write(color).await;
-        use_first = !use_first;
-        Timer::after(delay).await;
     }
 }
 

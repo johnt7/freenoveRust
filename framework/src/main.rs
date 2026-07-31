@@ -3,22 +3,16 @@
 
 extern crate alloc;
 
-use defmt::info;
 // use defmt::info;
 use embassy_executor::Spawner;
 use embassy_net::{StackResources};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
 use esp_hal::clock::CpuClock;
-// use esp_hal::clock::ClockControl;
 
-// use esp_hal::rmt::Rmt;
 use esp_hal::time::Rate;
-// use esp_hal::clock::ClockControl;
-// use esp_hal::{peripherals::Peripherals};
 use esp_hal::timer::timg::TimerGroup;
 use panic_rtt_target as _;
 use static_cell::StaticCell;
@@ -28,14 +22,13 @@ use esp_hal::{
     gpio::{Level},
     rmt::{Rmt, TxChannelConfig},
 };
-use smart_leds::RGB8;// use ws2812_rmt::{buffer_len, Timing, Ws2812, RGB8};
+use smart_leds::RGB8;
 
 mod heartbeat;
 mod wifi;
 mod internal;
 mod sr501;
 mod ws218;
-// mod neopixel;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -43,29 +36,18 @@ esp_bootloader_esp_idf::esp_app_desc!();
 static NET_STACK_RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
 static WIFI_IN_CHANNEL: Channel<CriticalSectionRawMutex, u8, 100> = Channel::new();
 static WIFI_OUT_CHANNEL: Channel<CriticalSectionRawMutex, u8, 100> = Channel::new();
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum SomeSensorState {
-  On,
-  Off,
-}
-
-static SR501_SIGNAL: Signal<CriticalSectionRawMutex, SomeSensorState> = Signal::new();
-
-
+static NEO_PIXEL_CHANNEL: Channel<CriticalSectionRawMutex, RGB8, 5> = Channel::new();
 
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     rtt_target::rtt_init_defmt!();
-    // let peripherals = Peripherals::take();
- 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
-    // let system = peripherals.SYSTEM.split(); 
-    // let clocks = ClockControl::max(system.clock_control).freeze();
 
+    // pin for the SR501 sensor
     let sr501pin = esp_hal::gpio::Input::new(peripherals.GPIO38, esp_hal::gpio::InputConfig::default().with_pull(esp_hal::gpio::Pull::None));
+
     // Set up the wifi handling 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 72 * 1024);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -81,6 +63,7 @@ async fn main(spawner: Spawner) -> ! {
         0x0123_4567_89ab_cdef,
     );
 
+    // Set up the NeoPixel
     let neopixel_pin = esp_hal::gpio::Output::new(peripherals.GPIO48, esp_hal::gpio::Level::Low, Default::default());
     let rmt= Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
     let tx_cfg = TxChannelConfig::default()
@@ -91,6 +74,7 @@ async fn main(spawner: Spawner) -> ! {
     let neop = ws218::NeoPixel::new(channel);
 
 
+    // Run the tasks
     // heartbeat LED task
     spawner.spawn(
         heartbeat::run(
@@ -103,9 +87,7 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(
         ws218::run_ws218(
             neop,
-            RGB8::new(255, 0, 0),
-            RGB8::new(0, 0, 0),
-            Duration::from_secs(5)
+            NEO_PIXEL_CHANNEL.receiver()
         )
         .expect("Failed to create NeoPixel task"),
     );
@@ -121,25 +103,15 @@ async fn main(spawner: Spawner) -> ! {
     );
     // Sample handler that reads from the input channel and writes to the output channel
     spawner.spawn(
-        internal::text_handler(WIFI_IN_CHANNEL.receiver(), WIFI_OUT_CHANNEL.sender())
+        internal::text_handler(WIFI_IN_CHANNEL.receiver(), WIFI_OUT_CHANNEL.sender(), NEO_PIXEL_CHANNEL.sender())
         .expect("Failed to create internal handler"),
     );
     spawner.spawn(
         sr501::sr501_task(sr501pin, Duration::from_millis(5000))
         .expect("Failed to create SR501 handler"),
-
     );
 
-    info!("Starting main loop");
-    Timer::after(Duration::from_secs(10)).await;
-    info!("Starting NeoPixel loop");
-    // loop {
-    //     info!("Turning on NeoPixel");
-    //     neoled.write(&[RGB8::new(0, 30, 0)]).unwrap();
-    //     Timer::after(Duration::from_secs(5)).await;
-    //     info!("Turning off NeoPixel");
-    //     neoled.write(&[RGB8::new(0, 0, 0)]).unwrap();
-    //     Timer::after(Duration::from_secs(5)).await;
-    // }
+    // let sender = NEO_PIXEL_CHANNEL.sender();
+    // sender.send(RGB8 { r: 255, g: 0, b: 0 }).await;
     runner.run().await;
 }
