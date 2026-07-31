@@ -15,7 +15,7 @@ use embassy_time::{Duration, Timer};
 use esp_hal::clock::CpuClock;
 // use esp_hal::clock::ClockControl;
 
-use esp_hal::rmt::Rmt;
+// use esp_hal::rmt::Rmt;
 use esp_hal::time::Rate;
 // use esp_hal::clock::ClockControl;
 // use esp_hal::{peripherals::Peripherals};
@@ -23,12 +23,18 @@ use esp_hal::timer::timg::TimerGroup;
 use panic_rtt_target as _;
 use static_cell::StaticCell;
 
-use ws2812_rmt::{buffer_len, Timing, Ws2812, RGB8};
+use esp_hal::rmt::TxChannelCreator;
+use esp_hal::{
+    gpio::{Level},
+    rmt::{Rmt, TxChannelConfig},
+};
+use smart_leds::RGB8;// use ws2812_rmt::{buffer_len, Timing, Ws2812, RGB8};
 
 mod heartbeat;
 mod wifi;
 mod internal;
 mod sr501;
+mod ws218;
 // mod neopixel;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
@@ -75,16 +81,14 @@ async fn main(spawner: Spawner) -> ! {
         0x0123_4567_89ab_cdef,
     );
 
-    // let neopixel_pin = esp_hal::gpio::Output::new(peripherals.GPIO48, esp_hal::gpio::Level::Low, Default::default());
+    let neopixel_pin = esp_hal::gpio::Output::new(peripherals.GPIO48, esp_hal::gpio::Level::Low, Default::default());
     let rmt= Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
-    
-    let mut neoled = Ws2812::<{ buffer_len(1) }>::new(
-        rmt.channel0,
-        peripherals.GPIO48,
-        Timing::WS2812B_AT_12_5NS_TICK_ESP32C3,
-        3, // clk_divider -- must match the constant's own doc comment
-    ).unwrap();
-
+    let tx_cfg = TxChannelConfig::default()
+    .with_clk_divider(1)
+    .with_idle_output(true)
+    .with_idle_output_level(Level::Low);
+    let channel = rmt.channel0.configure_tx(&tx_cfg).unwrap().with_pin(neopixel_pin);
+    let neop = ws218::NeoPixel::new(channel);
 
 
     // heartbeat LED task
@@ -94,6 +98,16 @@ async fn main(spawner: Spawner) -> ! {
             Duration::from_millis(500)
         )
         .expect("Failed to create heartbeat task"),
+    );
+    // NeoPixel task
+    spawner.spawn(
+        ws218::run_ws218(
+            neop,
+            RGB8::new(255, 0, 0),
+            RGB8::new(0, 0, 0),
+            Duration::from_secs(5)
+        )
+        .expect("Failed to create NeoPixel task"),
     );
     // wifi handling
     spawner.spawn(
@@ -119,13 +133,13 @@ async fn main(spawner: Spawner) -> ! {
     info!("Starting main loop");
     Timer::after(Duration::from_secs(10)).await;
     info!("Starting NeoPixel loop");
-    loop {
-        info!("Turning on NeoPixel");
-        neoled.write(&[RGB8::new(0, 30, 0)]).unwrap();
-        Timer::after(Duration::from_secs(5)).await;
-        info!("Turning off NeoPixel");
-        neoled.write(&[RGB8::new(0, 0, 0)]).unwrap();
-        Timer::after(Duration::from_secs(5)).await;
-    }
+    // loop {
+    //     info!("Turning on NeoPixel");
+    //     neoled.write(&[RGB8::new(0, 30, 0)]).unwrap();
+    //     Timer::after(Duration::from_secs(5)).await;
+    //     info!("Turning off NeoPixel");
+    //     neoled.write(&[RGB8::new(0, 0, 0)]).unwrap();
+    //     Timer::after(Duration::from_secs(5)).await;
+    // }
     runner.run().await;
 }
