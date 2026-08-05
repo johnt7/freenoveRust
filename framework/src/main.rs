@@ -29,6 +29,7 @@ mod wifi;
 mod internal;
 mod sr501;
 mod ws218;
+mod mmwave;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -72,6 +73,24 @@ async fn main(spawner: Spawner) -> ! {
     .with_idle_output_level(Level::Low);
     let channel = rmt.channel0.configure_tx(&tx_cfg).unwrap().with_pin(neopixel_pin);
     let neop = ws218::NeoPixel::new(channel);
+
+    // set up the mmWave
+    let mmwave_pin = esp_hal::gpio::Input::new(peripherals.GPIO47, esp_hal::gpio::InputConfig::default().with_pull(esp_hal::gpio::Pull::None));
+    let mut mmwave_serial = SerialPort::new(peripherals.UART0, UartConfig::default())
+        .expect("failed to initialize UART0")
+        .with_pins(peripherals.GPIO44, peripherals.GPIO43);
+
+    let tx_pin = peripherals.GPIO44; // mmWave TX → ESP RX
+    let rx_pin = peripherals.GPIO43; // mmWave RX → ESP TX
+        // Create UART0
+    let mut uart = Uart::new_async(
+        peripherals.UART0,
+        UartTx::new(tx_pin),
+        UartRx::new(rx_pin),
+        115_200,
+        &clocks,
+    );
+
 
 
     // Run the tasks
