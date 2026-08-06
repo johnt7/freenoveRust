@@ -21,6 +21,7 @@ use esp_hal::rmt::TxChannelCreator;
 use esp_hal::{
     gpio::{Level},
     rmt::{Rmt, TxChannelConfig},
+    uart::{Config as UartConfig, Uart},
 };
 use smart_leds::RGB8;
 
@@ -38,6 +39,18 @@ static NET_STACK_RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
 static WIFI_IN_CHANNEL: Channel<CriticalSectionRawMutex, u8, 100> = Channel::new();
 static WIFI_OUT_CHANNEL: Channel<CriticalSectionRawMutex, u8, 100> = Channel::new();
 static NEO_PIXEL_CHANNEL: Channel<CriticalSectionRawMutex, RGB8, 5> = Channel::new();
+
+// #[embassy_executor::task]
+// async fn uart_rx_task(mut uart: Uart<'static, esp_hal::Async>) -> ! {
+//     let mut byte = [0u8; 1];
+
+//     loop {
+//         uart.read_exact_async(&mut byte)
+//             .await
+//             .expect("UART read failed");
+//         info!("UART RX byte: {}", byte[0]);
+//     }
+// }
 
 
 #[esp_rtos::main]
@@ -76,20 +89,15 @@ async fn main(spawner: Spawner) -> ! {
 
     // set up the mmWave
     let mmwave_pin = esp_hal::gpio::Input::new(peripherals.GPIO47, esp_hal::gpio::InputConfig::default().with_pull(esp_hal::gpio::Pull::None));
-    let mut mmwave_serial = SerialPort::new(peripherals.UART0, UartConfig::default())
-        .expect("failed to initialize UART0")
-        .with_pins(peripherals.GPIO44, peripherals.GPIO43);
-
-    let tx_pin = peripherals.GPIO44; // mmWave TX → ESP RX
-    let rx_pin = peripherals.GPIO43; // mmWave RX → ESP TX
-        // Create UART0
-    let mut uart = Uart::new_async(
+    let mmwave_uart = Uart::new(
         peripherals.UART0,
-        UartTx::new(tx_pin),
-        UartRx::new(rx_pin),
-        115_200,
-        &clocks,
-    );
+        UartConfig::default(),
+    )
+    .expect("failed to initialize UART0")
+    .with_tx(peripherals.GPIO43)
+    .with_rx(peripherals.GPIO44)
+    .into_async();
+    let mmwave = mmwave::MmWave::new(mmwave_pin, mmwave_uart);
 
 
 
@@ -129,8 +137,10 @@ async fn main(spawner: Spawner) -> ! {
         sr501::sr501_task(sr501pin, Duration::from_millis(5000))
         .expect("Failed to create SR501 handler"),
     );
+    spawner.spawn(
+        mmwave::uart_rx_task(mmwave)
+        .expect("Failed to create UART token")
+    );
 
-    // let sender = NEO_PIXEL_CHANNEL.sender();
-    // sender.send(RGB8 { r: 255, g: 0, b: 0 }).await;
     runner.run().await;
 }
