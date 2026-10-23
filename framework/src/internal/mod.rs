@@ -5,6 +5,20 @@ use embassy_sync::channel::{Sender, Receiver};
 use heapless::Vec;
 // use super::sr501::SR501_SIGNAL;
 
+/// A task that handles incoming text commands, processes them, and sends appropriate responses.
+///
+/// # Arguments
+/// * `in_receiver` - The channel receiver for incoming bytes.
+/// * `out_sender` - The channel sender for outgoing bytes.
+/// * `neo_sender` - The channel sender for controlling NeoPixel LEDs.
+///
+/// # Returns
+/// This function never returns; it runs indefinitely.
+/// 
+/// It takes a stream of bytes from the `in_receiver`, accumulates them into a buffer,
+/// eventually sending them to the `out_sender` channel.
+/// It also interprets specific commands like "red", "green", and "blue" to control the NeoPixel LEDs.
+
 #[embassy_executor::task]
 pub async fn text_handler(
     in_receiver: Receiver<'static, CriticalSectionRawMutex, u8, 100>,

@@ -133,10 +133,12 @@ async fn main(spawner: Spawner) -> ! {
         internal::text_handler(WIFI_IN_CHANNEL.receiver(), WIFI_OUT_CHANNEL.sender(), NEO_PIXEL_CHANNEL.sender())
         .expect("Failed to create internal handler"),
     );
+    // SR501 sensor task
     spawner.spawn(
         sr501::sr501_task(sr501pin, Duration::from_millis(5000))
         .expect("Failed to create SR501 handler"),
     );
+    // mmWave UART task
     spawner.spawn(
         mmwave::uart_rx_task(mmwave)
         .expect("Failed to create UART token")

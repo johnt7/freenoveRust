@@ -26,6 +26,18 @@ const TARGET_IP: Ipv4Address = Ipv4Address::new(
     TARGET_IP_OCTETS[3],
 );
 
+/// A task that handles Wi-Fi connection and DHCP configuration.
+///
+/// # Arguments
+/// * `wifi_controller` - The Wi-Fi controller instance to manage the connection.
+/// * `stack` - The network stack instance to manage IP configuration.
+///
+/// # Returns
+/// This function never returns; it runs indefinitely.
+///
+/// It continuously attempts to connect to the specified Wi-Fi network, waits for DHCP configuration,
+/// and handles reconnection in case of failures.
+
 #[embassy_executor::task]
 pub async fn wifi_handling(mut wifi_controller: WifiController<'static>, stack: Stack<'static>) -> ! {
     let station_cfg = StationConfig::default()
@@ -105,6 +117,19 @@ pub async fn wifi_handling(mut wifi_controller: WifiController<'static>, stack: 
         Timer::after(Duration::from_secs(WIFI_RETRY_INTERVAL_SECONDS)).await;
     }
 }
+
+/// A task that sets up a TCP socket and handles communication.
+///
+/// # Arguments
+/// * `stack` - The network stack instance to use for the socket.
+/// * `in_sender` - The channel sender for incoming bytes.
+/// * `out_receiver` - The channel receiver for outgoing bytes.
+///
+/// # Returns
+/// This function never returns; it runs indefinitely.
+///
+/// It continuously waits for DHCP IPv4 configuration, establishes a TCP connection to the target,
+/// and handles incoming and outgoing data through the provided channels.
 
 #[embassy_executor::task]
 pub async fn socket_setup(stack: Stack<'static>, in_sender: Sender<'static, CriticalSectionRawMutex, u8, 100>, out_receiver: Receiver<'static, CriticalSectionRawMutex, u8, 100>) -> ! {

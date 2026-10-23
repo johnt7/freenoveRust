@@ -32,15 +32,25 @@ impl<'ch> MmWave<'ch> {
     }
 }
 
+/// A task that handles UART reception for the mmWave sensor.
+///
+/// # Arguments
+/// * `mmwave` - The mmWave sensor instance to interact with.
+///
+/// # Returns
+/// This function never returns; it runs indefinitely.
+/// 
+/// It continuously checks the status of the mmWave sensor's pin and sends test data over UART at regular intervals.
+
 #[embassy_executor::task]
 pub async fn uart_rx_task(mut mmwave: MmWave<'static>) -> ! {
     // let mut byte = [0u8; 1];
-    let mut pin_status = false;
+    let mut pin_status: bool;
     let test_data: [u8; 3] = [b'x', b'y', b'z']; // Example test data to send
 
     info!("Starting UART RX task for mmWave sensor");
     loop {
-        info!("Waiting for mmWave sensor data...");
+        info!("Waiting for mmWave sensor data..."); 
         // if let Some(b) = mmwave.read().await {
         //     info!("UART RX byte: {}", b);
         // }

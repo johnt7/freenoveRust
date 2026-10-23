@@ -31,6 +31,16 @@ impl<'ch> NeoPixel<'ch> {
     }
 }
 
+/// A task that controls WS2812 NeoPixels based on incoming color data.
+/// # Arguments
+/// * `neopixel` - The NeoPixel instance to control the WS2812 LEDs.
+/// * `in_channel` - The channel receiver for incoming color data.
+///
+/// # Returns
+/// This function never returns; it runs indefinitely.
+///
+/// It continuously waits for incoming color data and updates the WS2812 LEDs accordingly.
+
 #[embassy_executor::task]
 pub async fn run_ws218(
     mut neopixel: NeoPixel<'static>,

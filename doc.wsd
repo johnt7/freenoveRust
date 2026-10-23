@@ -1,0 +1,61 @@
+@startuml frameworkStruct
+skinparam titleBorderRoundCorner 15
+skinparam titleBorderThickness 2
+skinparam titleBackgroundColor red
+skinparam titleBackgroundColor Aqua-CadetBlue
+
+title Framework Structure
+
+state TopLevel {
+    TopLevel : This is the top-level state of the framework structure
+}
+
+state LED {
+    LED : This state represents the LED component of the framework structure
+}
+
+
+
+@enduml
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

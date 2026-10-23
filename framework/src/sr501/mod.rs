@@ -10,6 +10,18 @@ pub enum SomeSensorState {
 }
 pub static SR501_SIGNAL: Signal<CriticalSectionRawMutex, SomeSensorState> = Signal::new();
 
+
+/// A task that monitors the SR501 motion sensor and signals state changes.
+///
+/// # Arguments
+/// * `sr501pin` - The input pin connected to the SR501 sensor.
+/// * `delay` - The duration to wait between sensor checks.
+///
+/// # Returns
+/// This function never returns; it runs indefinitely.
+/// 
+/// It continuously checks the state of the SR501 sensor and signals any changes via `SR501_SIGNAL`.
+
 #[embassy_executor::task]
 pub async fn sr501_task(
     sr501pin: esp_hal::gpio::Input<'static>,
